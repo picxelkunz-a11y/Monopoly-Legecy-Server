@@ -775,6 +775,11 @@ setInterval(() => {
     }
   }
 }, 1200);
+// ✅ AUTO-SEED: buat akun default kalau belum ada user
+if (Object.keys(DB.users).length === 0) {
+  seedInitial();
+}
+
 if (process.argv.includes('--seed')) { seedInitial(); console.log('Done.'); process.exit(0); }
 server.listen(PORT, () => {
   console.log('');
