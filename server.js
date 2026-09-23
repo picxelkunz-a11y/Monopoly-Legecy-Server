@@ -605,6 +605,10 @@ const app = express();
 app.use(cors({origin:true, credentials:true}));
 app.use(express.json());
 app.use(cookieParser());
+app.use(express.static('public'));
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(process.cwd(), 'public', 'index.html'));
+});
 app.get('/api/health', (_req,res) => res.json({ok:true, ts:Date.now()}));
 app.get('/api/auth/session', (req,res) => {
   const s = getSession(req.cookies.ml_session);
