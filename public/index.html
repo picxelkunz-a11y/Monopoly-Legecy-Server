@@ -1,0 +1,1738 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+<title>👑 Monopoly Legacy</title>
+<style>
+  :root{color-scheme:dark}
+  *{box-sizing:border-box}
+  html,body,#root{height:100%;margin:0;background:#0b0d16;color:#f3e9d2;
+    font-family:'Inter',system-ui,-apple-system,sans-serif;overscroll-behavior:none}
+  button{font-family:inherit;cursor:pointer}
+  .btn{padding:10px 16px;border-radius:10px;border:1px solid #c9a44a;
+    background:linear-gradient(180deg,#2a2418,#1a1610);color:#f0dcae;font-weight:700;
+    letter-spacing:.5px;transition:all .15s}
+  .btn:hover:not(:disabled){background:linear-gradient(180deg,#3a3020,#2a2418);
+    box-shadow:0 0 20px rgba(201,164,74,.35)}
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .btn.primary{background:linear-gradient(180deg,#a67a25,#6d4a12);color:#fff5d6}
+  .btn.danger{border-color:#d44;color:#fbb}
+  .btn.ghost{background:transparent}
+  input,select{padding:10px 12px;border-radius:8px;border:1px solid #4a4231;
+    background:#15141a;color:#f3e9d2;width:100%;font-size:15px;font-family:inherit}
+  .card{background:rgba(20,18,28,.9);border:1px solid #3a3324;border-radius:14px;
+    padding:16px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
+  .row{display:flex;gap:10px}
+  .col{display:flex;flex-direction:column;gap:10px}
+  .muted{color:#9a8f77;font-size:13px}
+  .gold{color:#e9c46a}
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;background:#2a2418;
+    border:1px solid #4a3f24;font-size:12px}
+  .center{display:grid;place-items:center;min-height:100vh;padding:16px}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:9998;
+    display:grid;place-items:center;padding:12px}
+  .modal{max-width:720px;width:100%;max-height:92vh;overflow:auto}
+  pre{background:#0d0b12;border:1px solid #2a2434;border-radius:8px;padding:12px;
+    overflow:auto;font-size:12px;max-height:340px;color:#c9d1d9;white-space:pre}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap}
+  .tab{padding:6px 12px;border-radius:8px;background:#1a1822;border:1px solid #2a2434;
+    color:#9a8f77;font-size:13px;cursor:pointer}
+  .tab.active{background:#2a2418;color:#e9c46a;border-color:#a67a25}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    padding:10px 18px;border-radius:12px;z-index:9999;max-width:90vw}
+  @media (max-width:520px){.hide-sm{display:none}}
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "three": "https://esm.sh/three@0.169.0",
+    "@react-three/fiber": "https://esm.sh/@react-three/fiber@8.17.10?external=react,react-dom,three",
+    "zustand": "https://esm.sh/zustand@5.0.0"
+  }
+}
+</script>
+<script src="https://unpkg.com/@babel/standalone@7.25.7/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     SERVER CODE — semua file di bawah ini hanya TEKS.
+     Klik tombol 📋 COPY di aplikasi untuk menyalin.
+     ═══════════════════════════════════════════════════════════════ -->
+<script type="text/plain" id="file-package.json">
+{
+  "name": "monopoly-legacy-server",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "seed": "node server.js --seed"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
+</script>
+
+<script type="text/plain" id="file-server.js">
+// ═══════════════════════════════════════════════════════════════
+// 👑 MONOPOLY LEGACY — Authoritative Server (single-file)
+// Jalankan:  npm install && npm start
+// Seed akun: npm run seed
+// ═══════════════════════════════════════════════════════════════
+import express from 'express';
+import cors from 'cors';
+import cookieParser from 'cookie-parser';
+import http from 'node:http';
+import fs from 'node:fs';
+import path from 'node:path';
+import { WebSocketServer } from 'ws';
+import bcrypt from 'bcryptjs';
+import crypto from 'node:crypto';
+
+const PORT = process.env.PORT || 4000;
+const DB_FILE = process.env.DB_FILE || path.join(process.cwd(), 'ml-data.json');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'changeme-admin';
+const INITIAL_MEMBER_ACCOUNT_NAME = process.env.INITIAL_MEMBER_ACCOUNT_NAME || 'MUTTAQI2215';
+const INITIAL_MEMBER_PASSWORD = process.env.INITIAL_MEMBER_PASSWORD || 'ChangeMe_2025!';
+
+const uuid = () => crypto.randomUUID();
+const uid = (p) => p + '_' + crypto.randomBytes(6).toString('hex');
+
+// ─── Persistence (JSON file, no native deps) ─────────────────────
+let DB = { users: {}, sessions: {}, adminSessions: {}, adminAudit: [], games: {} };
+function loadDB() { try { DB = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); } catch {} }
+function saveDB() { try { fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2)); } catch (e) { console.error(e); } }
+loadDB();
+
+// ─── Board: 64 tiles, 24 cities, exact composition ───────────────
+const CITIES = [
+  {id:'ROMA',name:'Roma',region:'Ancient Rome',price:15000,desc:'The eternal capital.'},
+  {id:'POMPEII',name:'Pompeii',region:'Ancient Rome',price:17000,desc:'Beneath Vesuvius.'},
+  {id:'OSTIA',name:'Ostia',region:'Ancient Rome',price:19000,desc:'Harbor of Rome.'},
+  {id:'CAPUA',name:'Capua',region:'Ancient Rome',price:21000,desc:'Gladiator capital.'},
+  {id:'RAVENNA',name:'Ravenna',region:'Ancient Rome',price:24000,desc:'Last capital.'},
+  {id:'MEDIOLANUM',name:'Mediolanum',region:'Ancient Rome',price:27000,desc:'Northern crossroads.'},
+  {id:'NEAPOLIS',name:'Neapolis',region:'Ancient Rome',price:30000,desc:'City of the bay.'},
+  {id:'VERONA',name:'Verona',region:'Ancient Rome',price:33000,desc:'Gateway to the Alps.'},
+  {id:'LONDINIUM',name:'Londinium',region:'Old England',price:36000,desc:'Roman Britain hub.'},
+  {id:'EBORACUM',name:'Eboracum',region:'Old England',price:39000,desc:'Northern capital.'},
+  {id:'CAMULODUNUM',name:'Camulodunum',region:'Old England',price:42000,desc:'First capital.'},
+  {id:'VENTA_SILURUM',name:'Venta Silurum',region:'Old England',price:45000,desc:'Silures town.'},
+  {id:'WINTANCEASTER',name:'Wintanceaster',region:'Old England',price:48000,desc:'Wessex stronghold.'},
+  {id:'CANTWARABYRIG',name:'Cantwarabyrig',region:'Old England',price:51000,desc:'Kentish fortress.'},
+  {id:'LINDUM_COLONIA',name:'Lindum Colonia',region:'Old England',price:54000,desc:'Colony on hill.'},
+  {id:'GLEVUM',name:'Glevum',region:'Old England',price:57000,desc:'Veterans colony.'},
+  {id:'HISPALIS',name:'Hispalis',region:'Historical Spain',price:60000,desc:'Heart of Baetica.'},
+  {id:'TOLETUM',name:'Toletum',region:'Historical Spain',price:63000,desc:'Visigothic capital.'},
+  {id:'CORDUBA',name:'Corduba',region:'Historical Spain',price:66000,desc:'City of philosophers.'},
+  {id:'EMERITA_AUGUSTA',name:'Emerita Augusta',region:'Historical Spain',price:69000,desc:'Theater city.'},
+  {id:'TARRACO',name:'Tarraco',region:'Historical Spain',price:72000,desc:'Capital of Tarraconensis.'},
+  {id:'BARCINO',name:'Barcino',region:'Historical Spain',price:75000,desc:'Barcelona of antiquity.'},
+  {id:'VALENTIA',name:'Valentia',region:'Historical Spain',price:78000,desc:'City of strength.'},
+  {id:'CAESARAUGUSTA',name:'Caesaraugusta',region:'Historical Spain',price:82000,desc:'City on the Ebro.'},
+];
+const CITY_BY_ID = Object.fromEntries(CITIES.map(c => [c.id, c]));
+const BOARD = [
+  {t:'special',n:'START'},{t:'city',id:'ROMA'},{t:'guild'},{t:'love'},
+  {t:'city',id:'POMPEII'},{t:'wild'},{t:'shop'},{t:'city',id:'OSTIA'},
+  {t:'special',n:'TAX'},{t:'guild'},{t:'city',id:'CAPUA'},{t:'prison'},
+  {t:'city',id:'RAVENNA'},{t:'love'},{t:'shop'},{t:'city',id:'MEDIOLANUM'},
+  {t:'special',n:'AUCTION'},{t:'city',id:'NEAPOLIS'},{t:'guild'},{t:'wild'},
+  {t:'city',id:'VERONA'},{t:'special',n:'FESTIVAL'},{t:'city',id:'LONDINIUM'},{t:'shop'},
+  {t:'guild'},{t:'city',id:'EBORACUM'},{t:'love'},{t:'city',id:'CAMULODUNUM'},
+  {t:'special',n:'PLAGUE'},{t:'wild'},{t:'city',id:'VENTA_SILURUM'},{t:'prison'},
+  {t:'city',id:'WINTANCEASTER'},{t:'guild'},{t:'city',id:'CANTWARABYRIG'},{t:'shop'},
+  {t:'city',id:'LINDUM_COLONIA'},{t:'love'},{t:'special',n:'HARVEST'},{t:'city',id:'GLEVUM'},
+  {t:'guild'},{t:'wild'},{t:'city',id:'HISPALIS'},{t:'penampungan'},
+  {t:'city',id:'TOLETUM'},{t:'shop'},{t:'special',n:'TOURNAMENT'},{t:'city',id:'CORDUBA'},
+  {t:'guild'},{t:'city',id:'EMERITA_AUGUSTA'},{t:'love'},{t:'city',id:'TARRACO'},
+  {t:'special',n:'ROYAL_COURT'},{t:'wild'},{t:'city',id:'BARCINO'},{t:'guild'},
+  {t:'prison'},{t:'city',id:'VALENTIA'},{t:'special',n:'MYSTIC'},{t:'city',id:'CAESARAUGUSTA'},
+  {t:'shop'},{t:'special',n:'CAPITAL'},{t:'guild'},{t:'guild'},
+];
+
+// ─── Game constants ──────────────────────────────────────────────
+const STARTING_CL = 100000, MAX_HP = 500, MAX_MANA = 100, MAX_LUCK = 50;
+const CASTLE_COST = [0,8000,15000,25000,40000];
+const CASTLE_DEF = [0,15,30,50,75];
+const KINGDOM_COST = 65000;
+const GUILDS = ['Merchants','Scholars','Knights','Artisans','Diplomats'];
+const ARMIES = [
+  {tier:1,name:'Levy',soldiers:1000,cost:15000,power:100},
+  {tier:2,name:'Host',soldiers:10000,cost:55000,power:1200},
+  {tier:3,name:'Legion',soldiers:50000,cost:150000,power:7000},
+];
+const POTIONS = [
+  {id:'HEAL_MINOR',name:'Minor Elixir',heal:60,price:2000},
+  {id:'HEAL_MAJOR',name:'Major Elixir',heal:150,price:6000},
+  {id:'MANA_DRAUGHT',name:'Mana Draught',mana:30,price:3000},
+  {id:'PHOENIX',name:'Phoenix Elixir',revive:true,price:20000},
+  {id:'LUCK_CHARM',name:'Lucky Charm',luck:5,price:5000},
+];
+
+// ─── Auth ────────────────────────────────────────────────────────
+function createUser(accountName, password) {
+  const userId = uid('U');
+  DB.users[userId] = {
+    userId, accountName,
+    passwordHash: bcrypt.hashSync(password, 12),
+    status: 'ACTIVE', createdAt: Date.now(), updatedAt: Date.now(), lastLoginAt: null,
+  };
+  saveDB(); return userId;
+}
+function verifyLogin(accountName, password) {
+  const user = Object.values(DB.users).find(u => u.accountName === accountName);
+  if (!user) return {ok:false, code:'INVALID'};
+  if (user.status !== 'ACTIVE') return {ok:false, code:user.status};
+  if (!bcrypt.compareSync(password, user.passwordHash)) return {ok:false, code:'INVALID'};
+  user.lastLoginAt = Date.now(); saveDB();
+  return {ok:true, user};
+}
+function createSession(userId) {
+  const token = crypto.randomBytes(32).toString('hex');
+  DB.sessions[token] = {token, userId, createdAt:Date.now(), expiresAt:Date.now()+7*24*3600*1000};
+  saveDB(); return DB.sessions[token];
+}
+function getSession(token) {
+  const s = DB.sessions[token]; if (!s) return null;
+  if (s.expiresAt < Date.now()) { delete DB.sessions[token]; saveDB(); return null; }
+  const u = DB.users[s.userId]; if (!u || u.status !== 'ACTIVE') return null;
+  return {...u, token, expiresAt: s.expiresAt};
+}
+function destroySession(token) { delete DB.sessions[token]; saveDB(); }
+function changePassword(userId, pw) {
+  const u = DB.users[userId]; if (!u) return;
+  u.passwordHash = bcrypt.hashSync(pw, 12);
+  u.updatedAt = Date.now(); saveDB();
+}
+function seedInitial() {
+  if (Object.values(DB.users).some(u => u.accountName === INITIAL_MEMBER_ACCOUNT_NAME)) {
+    console.log('Account already exists:', INITIAL_MEMBER_ACCOUNT_NAME); return;
+  }
+  createUser(INITIAL_MEMBER_ACCOUNT_NAME, INITIAL_MEMBER_PASSWORD);
+  console.log('✅ Seeded member account:', INITIAL_MEMBER_ACCOUNT_NAME);
+}
+
+// ─── Admin ───────────────────────────────────────────────────────
+const ADMIN_PERMISSIONS = ['ADMIN_VIEW','ADMIN_GAME_CONTROL','ADMIN_ITEM_GRANT',
+  'ADMIN_CURRENCY_GRANT','ADMIN_LEGACY_GRANT','ADMIN_HEALTH_CONTROL','ADMIN_MANA_CONTROL',
+  'ADMIN_WEATHER_CONTROL','ADMIN_FULL_CONTROL'];
+function adminAuthenticate(user, password) {
+  if (password !== ADMIN_PASSWORD) return {ok:false, code:'INVALID_ADMIN'};
+  const id = uid('A'); const now = Date.now();
+  DB.adminSessions[id] = {adminSessionId:id, userId:user.userId,
+    permissions:ADMIN_PERMISSIONS, createdAt:now, expiresAt:now+30*60*1000, lastActivity:now};
+  saveDB();
+  return {ok:true, adminSessionId:id, permissions:ADMIN_PERMISSIONS, expiresAt:now+30*60*1000};
+}
+function getAdminSession(id) {
+  const s = DB.adminSessions[id]; if (!s) return null;
+  if (s.expiresAt < Date.now()) { delete DB.adminSessions[id]; saveDB(); return null; }
+  s.lastActivity = Date.now(); return s;
+}
+function hasPermission(sess, perm) {
+  return sess && (sess.permissions.includes('ADMIN_FULL_CONTROL') || sess.permissions.includes(perm));
+}
+
+// ─── Engine ──────────────────────────────────────────────────────
+function createGameState({gameId, roomCode, mode, players}) {
+  const state = {
+    gameId, roomCode, mode, stateVersion:1, round:1, turnIndex:0,
+    phase:'AWAIT_ROLL',
+    players: players.map(p => ({
+      playerId:p.playerId, accountName:p.accountName||null, displayName:p.displayName,
+      isBot:!!p.isBot, botPersonality:p.botPersonality||null, botDifficulty:p.botDifficulty||null,
+      controller:p.isBot?'BOT':'HUMAN', connected:true,
+      position:0, cl:STARTING_CL, hp:MAX_HP, maxHp:MAX_HP, mana:MAX_MANA, maxMana:MAX_MANA,
+      luck:0, defense:0, guild:null, army:null, inventory:[], ownedCityIds:[],
+      castles:0, hasKingdom:false, legacyScore:0, eliminated:false, defeated:false,
+      recoveryTurns:0, skipTurns:0, buffs:[],
+    })),
+    cities: Object.fromEntries(CITIES.map(c => [c.id, {
+      cityId:c.id, ownerId:null, level:0, buildingLevel:0, buildingValue:0,
+      wall:0, castleLevel:0, hasKingdom:false, kingdomLocked:false,
+    }])),
+    weather:{type:'CLEAR', endsRound:5}, disasters:[], chronicle:[],
+    pendingDecision:null, lastRoll:null, winner:null,
+  };
+  for (const p of state.players) recomputeDefense(state, p.playerId);
+  return state;
+}
+function currentCityValue(state, cid) {
+  const c = state.cities[cid]; const base = CITY_BY_ID[cid].price;
+  let v = base + c.buildingValue + c.wall*4000 + c.castleLevel*12000;
+  if (c.hasKingdom) v = Math.round(v * 1.65);
+  return v;
+}
+const cityRent = (s,cid) => Math.round(currentCityValue(s,cid) * 0.40);
+const cityIncome = (s,cid) => Math.round(CITY_BY_ID[cid].price*0.40 + currentCityValue(s,cid)*0.05);
+function recomputeDefense(state, pid) {
+  const p = state.players.find(x => x.playerId === pid); let def = 0;
+  for (const cid of p.ownedCityIds) {
+    const c = state.cities[cid];
+    def += CASTLE_DEF[c.castleLevel] + c.wall*5 + (c.hasKingdom ? 110 : 0);
+  }
+  if (p.army) def += ARMIES.find(a => a.tier === p.army.tier).power;
+  p.defense = def;
+}
+function applyDamage(state, targetId, raw, source) {
+  const p = state.players.find(x => x.playerId === targetId);
+  if (!p || p.eliminated) return null;
+  const dmg = Math.max(0, Math.round(raw - p.defense));
+  p.hp = Math.max(0, p.hp - dmg);
+  const ev = {type:'DAMAGE', targetId, source, raw, final:dmg, hpAfter:p.hp};
+  if (p.hp === 0 && !p.defeated) { p.defeated = true; p.recoveryTurns = 3; ev.defeated = true; }
+  return ev;
+}
+function heal(state, targetId, amount, source) {
+  const p = state.players.find(x => x.playerId === targetId); if (!p) return null;
+  const before = p.hp;
+  p.hp = Math.min(p.maxHp, p.hp + amount);
+  return {type:'HEAL', targetId, source, amount:p.hp-before, hpAfter:p.hp};
+}
+function chronicle(state, text) {
+  state.chronicle.push({round:state.round, text, ts:Date.now()});
+  if (state.chronicle.length > 300) state.chronicle.shift();
+}
+function currentPlayer(state) { return state.players[state.turnIndex]; }
+function advanceTurn(state) {
+  state.players[state.turnIndex].skipTurns = 0;
+  let next = state.turnIndex, loops = 0;
+  do {
+    next = (next + 1) % state.players.length;
+    if (next === 0) onRoundEnd(state);
+    loops++;
+  } while ((state.players[next].eliminated || state.players[next].skipTurns > 0) && loops < 64);
+  state.turnIndex = next;
+  state.phase = 'AWAIT_ROLL'; state.pendingDecision = null;
+}
+function onRoundEnd(state) {
+  state.round += 1;
+  if (state.round > 32) { endGame(state); return; }
+  for (const p of state.players) {
+    if (p.eliminated) continue;
+    if (state.round % 4 === 0) {
+      p.hp = Math.min(p.maxHp, p.hp+25);
+      p.mana = Math.min(p.maxMana, p.mana+10);
+    }
+    if (p.defeated) {
+      p.recoveryTurns -= 1;
+      if (p.recoveryTurns <= 0) {
+        const phoenix = p.inventory.find(i => i.id === 'PHOENIX');
+        if (phoenix) { p.inventory = p.inventory.filter(i => i.id !== 'PHOENIX'); p.hp = 200; p.defeated = false; chronicle(state, `🛡️ ${p.displayName} recovered.`); }
+        else { p.eliminated = true; chronicle(state, `☠️ ${p.displayName} is eliminated.`); }
+      }
+    }
+    for (const cid of p.ownedCityIds) p.cl += cityIncome(state, cid);
+  }
+  if (state.round % 5 === 0) {
+    const w = ['CLEAR','RAIN','GOLDEN_HARVEST','STORM','FOG'];
+    state.weather = {type:w[Math.floor(Math.random()*w.length)], endsRound:state.round+5};
+  }
+  checkFinalPhase(state);
+}
+function checkFinalPhase(state) {
+  const elim = state.players.filter(p => p.eliminated).length;
+  const n = state.players.length;
+  const th = n <= 4 ? 1 : n <= 6 ? 2 : 3;
+  if (elim >= th) endGame(state);
+}
+function legacyValue(state, p) {
+  let v = p.cl;
+  for (const cid of p.ownedCityIds) v += currentCityValue(state, cid);
+  v += p.legacyScore + p.castles*12000;
+  if (p.hasKingdom) v += 100000;
+  if (p.army) v += ARMIES.find(a => a.tier === p.army.tier).cost;
+  for (const i of p.inventory) v += (POTIONS.find(x => x.id === i.id)?.price || 0);
+  return v;
+}
+function endGame(state) {
+  state.phase = 'FINISHED';
+  let best = null, bestVal = -1;
+  for (const p of state.players) {
+    if (p.eliminated) continue;
+    const v = legacyValue(state, p);
+    if (v > bestVal) { bestVal = v; best = p; }
+  }
+  if (best) {
+    state.winner = {playerId:best.playerId, displayName:best.displayName, value:bestVal};
+    chronicle(state, `🏆 ${best.displayName} is LEGACY CHAMPION with ${bestVal.toLocaleString()}!`);
+  }
+}
+function rollDice(state, pid) {
+  const p = currentPlayer(state);
+  if (!p || p.playerId !== pid) return {error:'NOT_YOUR_TURN'};
+  if (state.phase !== 'AWAIT_ROLL') return {error:'NOT_IN_ROLL_PHASE'};
+  if (p.defeated) { state.phase = 'END_TURN'; return {roll:[0,0], total:0}; }
+  const d1 = 1+Math.floor(Math.random()*6), d2 = 1+Math.floor(Math.random()*6);
+  const total = d1+d2;
+  state.lastRoll = {d1, d2, total, playerId:pid, ts:Date.now()};
+  const to = (p.position + total) % BOARD.length;
+  p.position = to; state.phase = 'RESOLVING';
+  return {roll:[d1,d2], total, to, tile:BOARD[to]};
+}
+function resolveTile(state) {
+  const p = currentPlayer(state);
+  const tile = BOARD[p.position]; const events = [];
+  switch (tile.t) {
+    case 'city': {
+      const cid = tile.id; const c = state.cities[cid]; const info = CITY_BY_ID[cid];
+      if (!c.ownerId) {
+        state.pendingDecision = {playerId:p.playerId, type:'BUY_CITY', cityId:cid, price:info.price};
+      } else if (c.ownerId === p.playerId) {
+        const cost = Math.round(info.price*0.4*(c.buildingLevel+1));
+        state.pendingDecision = {playerId:p.playerId, type:'UPGRADE_OR_SKIP', cityId:cid, upgradeCost:cost};
+      } else {
+        const rent = cityRent(state, cid);
+        const owner = state.players.find(x => x.playerId === c.ownerId);
+        p.cl -= rent; owner.cl += rent;
+        events.push({type:'RENT_PAID', from:p.playerId, to:owner.playerId, amount:rent});
+        chronicle(state, `💰 ${p.displayName} paid ${rent.toLocaleString()} CL rent to ${owner.displayName} at ${info.name}.`);
+        if (p.cl < 0) bankruptcy(state, p);
+        state.phase = 'END_TURN';
+      }
+      break;
+    }
+    case 'guild':
+      state.pendingDecision = {playerId:p.playerId, type:'GUILD', guilds:GUILDS, armies:ARMIES}; break;
+    case 'shop':
+      state.pendingDecision = {playerId:p.playerId, type:'SHOP', items:POTIONS}; break;
+    case 'wild': {
+      const pool = [
+        {id:'W1',name:'Royal Subsidy',effect:'CL+50000'},
+        {id:'W2',name:'Divine Shield',effect:'HP+120'},
+        {id:'W3',name:'Arcane Surge',effect:'MANA+40'},
+        {id:'W4',name:'Fortune',effect:'CL+25000'},
+        {id:'W5',name:'Legacy Scroll',effect:'LEGACY+5000'},
+        {id:'W6',name:'Regal Guard',effect:'DEF+40'},
+        {id:'W7',name:'Golden Grain',effect:'HP+60,CL+20000'},
+        {id:'W8',name:'Crown Tax',effect:'CL+35000'},
+      ];
+      const chosen = []; const copy = [...pool];
+      for (let i=0;i<3;i++) chosen.push(copy.splice(Math.floor(Math.random()*copy.length),1)[0]);
+      state.pendingDecision = {playerId:p.playerId, type:'WILD_CARD', cards:chosen};
+      break;
+    }
+    case 'love': {
+      const isLove = Math.random() < 0.5;
+      if (isLove) { heal(state, p.playerId, 75, 'LOVE'); chronicle(state, `❤️ ${p.displayName} gained Love (+75 HP).`); }
+      else { p.luck = Math.min(MAX_LUCK, p.luck+3); chronicle(state, `🍀 ${p.displayName} gained Clover (+3 Luck).`); }
+      state.phase = 'END_TURN'; break;
+    }
+    case 'prison': {
+      p.skipTurns = 1; p.position = 11;
+      chronicle(state, `⛓️ ${p.displayName} was thrown into prison.`);
+      state.phase = 'END_TURN'; break;
+    }
+    case 'penampungan': {
+      heal(state, p.playerId, 40, 'PENAMPUNGAN');
+      p.mana = Math.min(p.maxMana, p.mana+15);
+      chronicle(state, `🏚️ ${p.displayName} sheltered at Penampungan.`);
+      state.phase = 'END_TURN'; break;
+    }
+    default: {
+      switch (tile.n) {
+        case 'START': p.cl += 25000; chronicle(state, `👑 ${p.displayName} passed START (+25k CL).`); break;
+        case 'TAX': p.cl = Math.max(0, p.cl-10000); chronicle(state, `💸 ${p.displayName} paid royal tax.`); break;
+        case 'HARVEST': p.cl += 15000; chronicle(state, `🌾 Golden Harvest for ${p.displayName}.`); break;
+        case 'PLAGUE': { const e = applyDamage(state, p.playerId, 80, 'PLAGUE'); chronicle(state, `☠️ Plague struck ${p.displayName} (-${e?.final} HP).`); break; }
+        default: p.cl += 5000;
+      }
+      state.phase = 'END_TURN';
+    }
+  }
+  return events;
+}
+function bankruptcy(state, p) {
+  while (p.cl < 0 && p.ownedCityIds.length) {
+    const cid = p.ownedCityIds.pop();
+    p.cl += Math.round(currentCityValue(state, cid)*0.7);
+    const c = state.cities[cid];
+    c.ownerId = null; c.buildingLevel = 0; c.buildingValue = 0; c.wall = 0;
+    c.castleLevel = 0; c.hasKingdom = false;
+    chronicle(state, `🏚️ ${p.displayName} sold ${CITY_BY_ID[cid].name}.`);
+  }
+  if (p.cl < 0) { p.eliminated = true; chronicle(state, `☠️ ${p.displayName} declared bankruptcy.`); }
+}
+function applyAction(state, pid, action) {
+  const p = state.players.find(x => x.playerId === pid);
+  if (!p || p.eliminated) return {error:'INVALID_PLAYER'};
+  const events = [];
+  switch (action.type) {
+    case 'ROLL_DICE': {
+      const r = rollDice(state, pid);
+      if (r.error) return r;
+      events.push({type:'DICE', roll:r.roll, total:r.total});
+      events.push(...resolveTile(state));
+      return {events};
+    }
+    case 'BUY_CITY': {
+      const pd = state.pendingDecision;
+      if (!pd || pd.playerId !== pid || pd.type !== 'BUY_CITY') return {error:'NO_PENDING_BUY'};
+      if (p.cl < pd.price) return {error:'INSUFFICIENT_CL'};
+      p.cl -= pd.price;
+      state.cities[pd.cityId].ownerId = p.playerId;
+      p.ownedCityIds.push(pd.cityId);
+      recomputeDefense(state, p.playerId);
+      chronicle(state, `🏙️ ${p.displayName} bought ${CITY_BY_ID[pd.cityId].name} for ${pd.price.toLocaleString()} CL.`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'CITY_BOUGHT', cityId:pd.cityId}]};
+    }
+    case 'DECLINE_BUY': {
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'DECLINED'}]};
+    }
+    case 'UPGRADE_CITY': {
+      const pd = state.pendingDecision;
+      if (!pd || pd.playerId !== pid) return {error:'NO_PENDING'};
+      const cid = pd.cityId; const c = state.cities[cid];
+      if (c.ownerId !== p.playerId) return {error:'NOT_OWNER'};
+      const cost = Math.round(CITY_BY_ID[cid].price*0.4*(c.buildingLevel+1));
+      if (p.cl < cost) return {error:'INSUFFICIENT_CL'};
+      p.cl -= cost; c.buildingLevel += 1; c.buildingValue += Math.round(cost*1.5); c.level = c.buildingLevel;
+      recomputeDefense(state, p.playerId);
+      chronicle(state, `⚒️ ${p.displayName} upgraded ${CITY_BY_ID[cid].name} → Lv${c.buildingLevel}.`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'CITY_UPGRADED', cityId:cid, level:c.buildingLevel}]};
+    }
+    case 'BUILD_CASTLE': {
+      const pd = state.pendingDecision;
+      const cid = (pd && pd.cityId) || action.cityId;
+      const c = state.cities[cid];
+      if (!c || c.ownerId !== p.playerId) return {error:'NOT_OWNER'};
+      if (c.hasKingdom || c.kingdomLocked) return {error:'CASTLE_LOCKED'};
+      if (c.castleLevel >= 4) return {error:'MAX_CASTLE'};
+      const cost = CASTLE_COST[c.castleLevel+1];
+      if (p.cl < cost) return {error:'INSUFFICIENT_CL'};
+      p.cl -= cost; c.castleLevel += 1;
+      p.castles = p.ownedCityIds.filter(x => state.cities[x].castleLevel > 0).length;
+      recomputeDefense(state, p.playerId);
+      chronicle(state, `🏰 ${p.displayName} raised Castle ${c.castleLevel} at ${CITY_BY_ID[cid].name}.`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'CASTLE_BUILT', cityId:cid, level:c.castleLevel}]};
+    }
+    case 'BUILD_KINGDOM': {
+      const cid = action.cityId; const c = state.cities[cid];
+      if (!c || c.ownerId !== p.playerId) return {error:'NOT_OWNER'};
+      if (c.hasKingdom) return {error:'ALREADY_KINGDOM'};
+      const castles = p.ownedCityIds.filter(x => state.cities[x].castleLevel > 0).length;
+      if (castles < 2) return {error:'NEED_TWO_CASTLES'};
+      if (p.cl < KINGDOM_COST) return {error:'INSUFFICIENT_CL'};
+      p.cl -= KINGDOM_COST; c.hasKingdom = true; p.hasKingdom = true;
+      for (const x of p.ownedCityIds) state.cities[x].kingdomLocked = true;
+      recomputeDefense(state, p.playerId);
+      chronicle(state, `👑 ${p.displayName} established a KINGDOM at ${CITY_BY_ID[cid].name}!`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'KINGDOM_ESTABLISHED', cityId:cid}]};
+    }
+    case 'JOIN_GUILD': {
+      const pd = state.pendingDecision;
+      if (!pd || pd.playerId !== pid || pd.type !== 'GUILD') return {error:'NO_PENDING_GUILD'};
+      if (!GUILDS.includes(action.guild)) return {error:'INVALID_GUILD'};
+      p.guild = action.guild;
+      chronicle(state, `⚔️ ${p.displayName} joined ${action.guild} Guild.`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'GUILD_JOINED', guild:action.guild}]};
+    }
+    case 'BUY_ARMY': {
+      const tier = Number(action.tier);
+      const a = ARMIES.find(x => x.tier === tier);
+      if (!a) return {error:'INVALID_TIER'};
+      if (p.cl < a.cost) return {error:'INSUFFICIENT_CL'};
+      p.cl -= a.cost; p.army = {tier, soldiers:a.soldiers};
+      recomputeDefense(state, p.playerId);
+      chronicle(state, `🛡️ ${p.displayName} recruited ${a.name}.`);
+      if (state.pendingDecision?.type === 'GUILD') { state.pendingDecision = null; state.phase = 'END_TURN'; }
+      return {events:[{type:'ARMY_BOUGHT', tier}]};
+    }
+    case 'BUY_ITEM': {
+      const item = POTIONS.find(x => x.id === action.itemId);
+      if (!item) return {error:'INVALID_ITEM'};
+      if (p.cl < item.price) return {error:'INSUFFICIENT_CL'};
+      p.cl -= item.price; p.inventory.push({id:item.id, name:item.name});
+      chronicle(state, `🛍️ ${p.displayName} bought ${item.name}.`);
+      return {events:[{type:'ITEM_BOUGHT', itemId:item.id}]};
+    }
+    case 'USE_POTION': {
+      const idx = p.inventory.findIndex(i => i.id === action.itemId);
+      if (idx < 0) return {error:'NOT_OWNED'};
+      const item = POTIONS.find(x => x.id === action.itemId);
+      p.inventory.splice(idx, 1);
+      if (item.heal) heal(state, p.playerId, item.heal, 'POTION');
+      if (item.mana) p.mana = Math.min(p.maxMana, p.mana + item.mana);
+      if (item.luck) p.luck = Math.min(MAX_LUCK, p.luck + item.luck);
+      if (item.revive && p.defeated) { p.hp = 200; p.defeated = false; }
+      chronicle(state, `🧪 ${p.displayName} used ${item.name}.`);
+      return {events:[{type:'POTION_USED', itemId:action.itemId}]};
+    }
+    case 'CHOOSE_WILD_CARD': {
+      const pd = state.pendingDecision;
+      if (!pd || pd.playerId !== pid || pd.type !== 'WILD_CARD') return {error:'NO_PENDING_WILD'};
+      const card = pd.cards.find(c => c.id === action.cardId);
+      if (!card) return {error:'INVALID_CARD'};
+      switch (card.effect) {
+        case 'CL+50000': p.cl += 50000; break;
+        case 'HP+120': heal(state, p.playerId, 120, 'WILD'); break;
+        case 'MANA+40': p.mana = Math.min(p.maxMana, p.mana+40); break;
+        case 'CL+25000': p.cl += 25000; break;
+        case 'LEGACY+5000': p.legacyScore += 5000; break;
+        case 'DEF+40': p.defense += 40; break;
+        case 'HP+60,CL+20000': p.cl += 20000; heal(state, p.playerId, 60, 'WILD'); break;
+        case 'CL+35000': p.cl += 35000; break;
+      }
+      chronicle(state, `🃏 ${p.displayName} resolved ${card.name}.`);
+      state.pendingDecision = null; state.phase = 'END_TURN';
+      return {events:[{type:'WILD_CARD_RESOLVED', cardId:card.id}]};
+    }
+    case 'END_TURN': {
+      if (state.pendingDecision && state.pendingDecision.playerId === pid) return {error:'RESOLVE_PENDING'};
+      advanceTurn(state);
+      return {events:[{type:'TURN_ADVANCED', turnIndex:state.turnIndex}]};
+    }
+    case 'RAID': {
+      const target = state.players.find(x => x.playerId === action.targetId);
+      if (!target || target.eliminated) return {error:'INVALID_TARGET'};
+      if (!p.army) return {error:'NO_ARMY'};
+      const power = ARMIES.find(a => a.tier === p.army.tier).power;
+      const raw = Math.round(power*0.6 + Math.random()*40);
+      const ev = applyDamage(state, target.playerId, raw, 'RAID:'+p.playerId);
+      chronicle(state, `⚔️ ${p.displayName} raided ${target.displayName} (-${ev.final} HP).`);
+      return {events:[ev]};
+    }
+    default: return {error:'UNKNOWN_ACTION'};
+  }
+}
+// Admin actions (authoritative)
+const ADMIN_ACTIONS = {
+  GRANT_CL: (s, tid, amt) => { const t = s.players.find(p => p.playerId===tid); if (!t) return {error:'NO_TARGET'}; t.cl += amt; chronicle(s, `⚙️ ADMIN granted ${t.displayName} +${amt.toLocaleString()} CL.`); return {ok:true}; },
+  SET_CL: (s, tid, amt) => { const t = s.players.find(p => p.playerId===tid); if (!t) return {error:'NO_TARGET'}; t.cl = amt; chronicle(s, `⚙️ ADMIN set ${t.displayName} CL.`); return {ok:true}; },
+  HEAL_FULL: (s, tid) => { const t = s.players.find(p => p.playerId===tid); if (!t) return {error:'NO_TARGET'}; t.hp = t.maxHp; t.defeated = false; t.eliminated = false; chronicle(s, `⚙️ ADMIN fully healed ${t.displayName}.`); return {ok:true}; },
+  MANA_FULL: (s, tid) => { const t = s.players.find(p => p.playerId===tid); if (!t) return {error:'NO_TARGET'}; t.mana = t.maxMana; chronicle(s, `⚙️ ADMIN restored ${t.displayName} mana.`); return {ok:true}; },
+  GRANT_ALL_ITEMS: (s, tid) => { const t = s.players.find(p => p.playerId===tid); if (!t) return {error:'NO_TARGET'}; for (const i of POTIONS) t.inventory.push({id:i.id, name:i.name}); chronicle(s, `⚙️ ADMIN granted ${t.displayName} ALL items.`); return {ok:true, count:POTIONS.length}; },
+  SUMMON_WEATHER: (s, _t, type) => { s.weather = {type, endsRound:s.round+5}; chronicle(s, `⚙️ ADMIN summoned ${type}.`); return {ok:true}; },
+  FORCE_NEXT_TURN: (s) => { advanceTurn(s); return {ok:true}; },
+  PAUSE: (s) => { s.phase = 'PAUSED'; return {ok:true}; },
+  RESUME: (s) => { s.phase = 'AWAIT_ROLL'; return {ok:true}; },
+};
+function audit(entry) { DB.adminAudit.push({...entry, timestamp:Date.now()}); if (DB.adminAudit.length > 2000) DB.adminAudit.shift(); saveDB(); }
+
+// ─── Bots ────────────────────────────────────────────────────────
+function botTick(state) {
+  if (!state || state.phase === 'FINISHED' || state.phase === 'PAUSED') return null;
+  const p = currentPlayer(state);
+  if (!p || !p.isBot || p.eliminated) return null;
+  const pd = state.pendingDecision;
+  if (pd && pd.playerId === p.playerId) {
+    if (pd.type === 'BUY_CITY') return {type: p.cl > pd.price*1.2 ? 'BUY_CITY' : 'DECLINE_BUY'};
+    if (pd.type === 'UPGRADE_OR_SKIP') {
+      if (p.cl > pd.upgradeCost*2 && p.botPersonality !== 'WARLORD') return {type:'UPGRADE_CITY', cityId:pd.cityId};
+      return {type:'DECLINE_BUY'};
+    }
+    if (pd.type === 'GUILD') {
+      const tier = p.botPersonality === 'WARLORD' && p.cl > 60000 ? 2 : 1;
+      if (p.botPersonality === 'WARLORD' && p.cl > ARMIES[tier-1].cost) return {type:'BUY_ARMY', tier};
+      const guild = p.botPersonality === 'WARLORD' ? 'Knights' : p.botPersonality === 'TYCOON' ? 'Merchants' : 'Artisans';
+      return {type:'JOIN_GUILD', guild};
+    }
+    if (pd.type === 'SHOP') {
+      const potion = p.hp < 250 ? POTIONS[1] : POTIONS[0];
+      if (p.cl > potion.price*2) return {type:'BUY_ITEM', itemId:potion.id};
+      return {type:'DECLINE_BUY'};
+    }
+    if (pd.type === 'WILD_CARD') return {type:'CHOOSE_WILD_CARD', cardId:pd.cards[0].id};
+    return {type:'DECLINE_BUY'};
+  }
+  if (state.phase === 'AWAIT_ROLL') return {type:'ROLL_DICE'};
+  if (state.phase === 'END_TURN') return {type:'END_TURN'};
+  return null;
+}
+
+// ─── Rooms ───────────────────────────────────────────────────────
+const rooms = new Map(), games = new Map(), socketCtx = new Map();
+const BOT_NAMES = ['Ragnar','Arthur','Isabella','Leonidas','Boudica','Charlemagne'];
+const roomCode = () => crypto.randomBytes(3).toString('hex').toUpperCase();
+function createRoom({user, displayName, mode, maxPlayers}) {
+  const rc = roomCode(); const gameId = 'G_'+crypto.randomBytes(6).toString('hex');
+  const room = {
+    roomId: uid('R'), roomCode: rc, gameId, hostUserId: user.userId, mode,
+    maxPlayers: mode === 'BOT_PRACTICE' ? 4 : maxPlayers,
+    botReplacementEnabled: true, status: 'WAITING',
+    players: [{
+      playerId: uid('P'), userId: user.userId, accountName: user.accountName,
+      displayName, isBot: false, ready: false, connected: true,
+    }],
+    stateVersion: 1, createdAt: Date.now(),
+  };
+  rooms.set(rc, room);
+  if (mode === 'BOT_PRACTICE') {
+    const pool = [...BOT_NAMES].sort(() => Math.random()-0.5).slice(0,3);
+    const pers = ['TYCOON','WARLORD','DEFENDER'];
+    for (let i=0;i<3;i++) room.players.push({
+      playerId: uid('P_BOT'), userId: null, accountName: null,
+      displayName: pool[i], isBot: true, botPersonality: pers[i], botDifficulty: 'NORMAL',
+      ready: true, connected: true,
+    });
+  }
+  return room;
+}
+function joinRoom({user, displayName, roomCode}) {
+  const room = rooms.get(roomCode);
+  if (!room) return {error:'ROOM_NOT_FOUND'};
+  if (room.status !== 'WAITING') return {error:'ROOM_IN_PROGRESS'};
+  if (room.mode === 'BOT_PRACTICE') return {error:'BOT_PRACTICE_IS_SOLO'};
+  if (room.players.length >= room.maxPlayers) return {error:'ROOM_FULL'};
+  if (room.players.some(p => p.displayName.toLowerCase() === displayName.toLowerCase())) return {error:'DISPLAY_NAME_TAKEN'};
+  const player = {playerId: uid('P'), userId: user.userId, accountName: user.accountName, displayName, isBot:false, ready:false, connected:true};
+  room.players.push(player);
+  return {room, player};
+}
+function validateStart(room) {
+  if (room.status !== 'WAITING') return {error:'NOT_WAITING'};
+  if (room.mode === 'BOT_PRACTICE') {
+    const humans = room.players.filter(p => !p.isBot);
+    const bots = room.players.filter(p => p.isBot);
+    if (humans.length !== 1 || bots.length !== 3) return {error:'BOT_PRACTICE_MUST_BE_1H_3B'};
+    if (!humans[0].ready) return {error:'HUMAN_NOT_READY'};
+    return {ok:true};
+  }
+  if (![4,6,8].includes(room.maxPlayers)) return {error:'INVALID_PLAYER_COUNT'};
+  if (room.players.length !== room.maxPlayers) return {error:'NOT_ENOUGH_PLAYERS'};
+  if (room.players.some(p => !p.ready)) return {error:'NOT_ALL_READY'};
+  return {ok:true};
+}
+function startGame(room) {
+  const state = createGameState({gameId: room.gameId, roomCode: room.roomCode, mode: room.mode, players: room.players});
+  games.set(room.gameId, state);
+  room.status = 'ACTIVE';
+  chronicle(state, `🎲 Game began in ${room.mode} mode.`);
+  return state;
+}
+
+// ─── Server bootstrap ────────────────────────────────────────────
+const app = express();
+app.use(cors({origin:true, credentials:true}));
+app.use(express.json());
+app.use(cookieParser());
+
+app.get('/api/health', (_req,res) => res.json({ok:true, ts:Date.now()}));
+app.get('/api/auth/session', (req,res) => {
+  const s = getSession(req.cookies.ml_session);
+  if (!s) return res.status(401).json({authenticated:false});
+  res.json({authenticated:true, user:{userId:s.userId,accountName:s.accountName,status:s.status}, session:{expiresAt:s.expiresAt}});
+});
+app.post('/api/auth/login', (req,res) => {
+  const {accountName, password} = req.body || {};
+  if (!accountName || !password) return res.status(400).json({authenticated:false, error:'MISSING'});
+  const r = verifyLogin(accountName, password);
+  if (!r.ok) return res.status(401).json({authenticated:false, error:r.code});
+  const sess = createSession(r.user.userId);
+  res.cookie('ml_session', sess.token, {httpOnly:true, sameSite:'lax', maxAge: sess.expiresAt-Date.now()});
+  res.json({authenticated:true, token:sess.token, user:{userId:r.user.userId,accountName:r.user.accountName,status:r.user.status}, session:{expiresAt:sess.expiresAt}});
+});
+app.post('/api/auth/logout', (req,res) => {
+  const t = req.cookies.ml_session; if (t) destroySession(t);
+  res.clearCookie('ml_session'); res.json({ok:true});
+});
+
+const server = http.createServer(app);
+const wss = new WebSocketServer({server, path:'/ws'});
+const send = (ws, obj) => { if (ws.readyState === 1) ws.send(JSON.stringify(obj)); };
+const sendErr = (ws, code, msg) => send(ws, {type:'ERROR', code, message:msg});
+function broadcastRoom(room) {
+  for (const [ws,ctx] of socketCtx) if (ctx.roomCode === room.roomCode && ws.readyState===1) send(ws, {type:'ROOM_STATE', room});
+}
+function broadcastGame(state) {
+  for (const [ws,ctx] of socketCtx) if (ctx.roomCode === state.roomCode && ws.readyState===1) send(ws, {type:'GAME_STATE', state, stateVersion: state.stateVersion});
+}
+function validateName(n) {
+  return typeof n === 'string' && n.length >= 3 && n.length <= 20 && /^[\p{L}\p{N} _\-'.]+$/u.test(n);
+}
+function permFor(name) {
+  if (name==='GRANT_CL'||name==='SET_CL') return 'ADMIN_CURRENCY_GRANT';
+  if (name==='HEAL_FULL') return 'ADMIN_HEALTH_CONTROL';
+  if (name==='MANA_FULL') return 'ADMIN_MANA_CONTROL';
+  if (name==='GRANT_ALL_ITEMS') return 'ADMIN_ITEM_GRANT';
+  if (name==='SUMMON_WEATHER') return 'ADMIN_WEATHER_CONTROL';
+  if (name==='PAUSE'||name==='RESUME'||name==='FORCE_NEXT_TURN') return 'ADMIN_GAME_CONTROL';
+  return 'ADMIN_FULL_CONTROL';
+}
+
+wss.on('connection', (ws) => {
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+  ws.on('message', (raw) => {
+    let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
+    try { handle(ws, msg); } catch (e) { console.error(e); sendErr(ws, 'INTERNAL', 'Server error'); }
+  });
+  ws.on('close', () => {
+    const ctx = socketCtx.get(ws);
+    if (ctx?.roomCode) {
+      const room = rooms.get(ctx.roomCode);
+      if (room) { const p = room.players.find(x => x.userId === ctx.userId); if (p) p.connected = false; broadcastRoom(room); }
+    }
+    socketCtx.delete(ws);
+  });
+});
+
+function handle(ws, msg) {
+  const ctx = socketCtx.get(ws) || {};
+  switch (msg.type) {
+    case 'PING': return send(ws, {type:'PONG', t0:msg.t0, reqId:msg.reqId, tServer:Date.now()});
+    case 'AUTH': {
+      const s = getSession(msg.token);
+      if (!s) return sendErr(ws, 'INVALID_SESSION', 'Session expired.');
+      socketCtx.set(ws, {...ctx, userId:s.userId, accountName:s.accountName});
+      return send(ws, {type:'AUTH_OK', user:{userId:s.userId, accountName:s.accountName}});
+    }
+    case 'CHANGE_PASSWORD': {
+      if (!ctx.userId) return sendErr(ws, 'UNAUTHENTICATED', 'Login first.');
+      if (!msg.newPassword || msg.newPassword.length < 8) return sendErr(ws, 'WEAK_PASSWORD', 'Min 8 chars.');
+      changePassword(ctx.userId, msg.newPassword);
+      return send(ws, {type:'AUTH_OK', user:{userId:ctx.userId, accountName:ctx.accountName, mustChangePassword:false}});
+    }
+    case 'CREATE_ROOM': {
+      if (!ctx.userId) return sendErr(ws, 'UNAUTHENTICATED', 'Login first.');
+      const mode = msg.mode === 'BOT_PRACTICE' ? 'BOT_PRACTICE' : 'ONLINE_MULTIPLAYER';
+      const mp = [4,6,8].includes(msg.maxPlayers) ? msg.maxPlayers : 4;
+      if (!validateName(msg.displayName)) return sendErr(ws, 'INVALID_NAME', 'Invalid name.');
+      const room = createRoom({user:{userId:ctx.userId, accountName:ctx.accountName}, displayName:msg.displayName, mode, maxPlayers:mp});
+      const player = room.players.find(p => p.userId === ctx.userId);
+      socketCtx.set(ws, {...ctx, roomCode:room.roomCode, playerId:player.playerId});
+      return send(ws, {type:'ROOM_STATE', room});
+    }
+    case 'JOIN_ROOM': {
+      if (!ctx.userId) return sendErr(ws, 'UNAUTHENTICATED', 'Login first.');
+      if (!validateName(msg.displayName)) return sendErr(ws, 'INVALID_NAME', 'Invalid name.');
+      const {room, player, error} = joinRoom({user:{userId:ctx.userId, accountName:ctx.accountName}, displayName:msg.displayName, roomCode:(msg.roomCode||'').toUpperCase()});
+      if (error) return sendErr(ws, error, error);
+      socketCtx.set(ws, {...ctx, roomCode:room.roomCode, playerId:player.playerId});
+      return broadcastRoom(room);
+    }
+    case 'READY': {
+      if (!ctx.roomCode) return;
+      const room = rooms.get(ctx.roomCode); if (!room) return;
+      const p = room.players.find(x => x.userId === ctx.userId);
+      if (p) p.ready = !!msg.ready;
+      broadcastRoom(room); return;
+    }
+    case 'START_GAME': {
+      const room = rooms.get(ctx.roomCode); if (!room) return sendErr(ws, 'NO_ROOM', 'No room.');
+      if (room.hostUserId !== ctx.userId) return sendErr(ws, 'NOT_HOST', 'Only host.');
+      const v = validateStart(room);
+      if (v.error) return sendErr(ws, v.error, v.error);
+      const state = startGame(room);
+      broadcastRoom(room); broadcastGame(state); return;
+    }
+    case 'ACTION': {
+      if (!ctx.userId) return sendErr(ws, 'UNAUTHENTICATED', 'Login first.');
+      const state = games.get(msg.gameId); if (!state) return sendErr(ws, 'NO_GAME', 'Not found.');
+      if (!state._processed) state._processed = new Map();
+      if (state._processed.has(msg.requestId)) return send(ws, state._processed.get(msg.requestId));
+      if (typeof msg.clientStateVersion === 'number' && msg.clientStateVersion !== state.stateVersion) {
+        const rj = {type:'ACTION_REJECTED', requestId:msg.requestId, actionId:msg.actionId,
+          error:{code:'STATE_VERSION_CONFLICT', message:'Out of sync.'}, stateVersion:state.stateVersion};
+        state._processed.set(msg.requestId, rj); return send(ws, rj);
+      }
+      const player = state.players.find(p => p.accountName === ctx.accountName);
+      if (!player) return sendErr(ws, 'NOT_IN_GAME', 'Not a player.');
+      const res = applyAction(state, player.playerId, msg.action);
+      if (res.error) {
+        const rj = {type:'ACTION_REJECTED', requestId:msg.requestId, actionId:msg.actionId,
+          error:{code:res.error, message:res.error}, stateVersion:state.stateVersion};
+        state._processed.set(msg.requestId, rj); return send(ws, rj);
+      }
+      state.stateVersion += 1;
+      const ok = {type:'ACTION_ACCEPTED', requestId:msg.requestId, actionId:msg.actionId,
+        stateVersion:state.stateVersion, events:res.events||[]};
+      state._processed.set(msg.requestId, ok);
+      send(ws, ok); broadcastGame(state); return;
+    }
+    case 'ADMIN_AUTH': {
+      if (!ctx.userId) return sendErr(ws, 'UNAUTHENTICATED', 'Login first.');
+      const r = adminAuthenticate({userId:ctx.userId}, msg.password);
+      if (!r.ok) return sendErr(ws, r.code, 'Admin auth failed.');
+      socketCtx.set(ws, {...ctx, adminSessionId:r.adminSessionId});
+      return send(ws, {type:'ADMIN_OK', permissions:r.permissions, expiresAt:r.expiresAt});
+    }
+    case 'ADMIN_ACTION': {
+      if (!ctx.adminSessionId) return sendErr(ws, 'NO_ADMIN_SESSION', 'Not admin.');
+      const sess = getAdminSession(ctx.adminSessionId);
+      if (!sess) return sendErr(ws, 'ADMIN_SESSION_EXPIRED', 'Expired.');
+      const state = games.get(msg.gameId); if (!state) return sendErr(ws, 'NO_GAME', 'Not found.');
+      const perm = permFor(msg.action.name);
+      if (perm && !hasPermission(sess, perm)) return sendErr(ws, 'FORBIDDEN', 'Need '+perm);
+      const fn = ADMIN_ACTIONS[msg.action.name];
+      if (!fn) return sendErr(ws, 'UNKNOWN_ADMIN_ACTION', 'Unknown.');
+      const r = fn(state, msg.action.targetPlayerId, msg.action.arg);
+      if (r.error) return sendErr(ws, r.error, r.error);
+      audit({adminUserId:ctx.userId, adminSessionId:ctx.adminSessionId, gameId:state.gameId,
+        targetPlayerId:msg.action.targetPlayerId||null, action:msg.action.name,
+        parameters:msg.action, requestId:msg.action.requestId, actionId:msg.action.actionId});
+      state.stateVersion += 1;
+      send(ws, {type:'ADMIN_AUDIT', action:msg.action.name, ok:true, stateVersion:state.stateVersion});
+      broadcastGame(state); return;
+    }
+    default: sendErr(ws, 'UNKNOWN_MESSAGE', msg.type);
+  }
+}
+
+// Heartbeat
+setInterval(() => { wss.clients.forEach(ws => { if (ws.isAlive === false) return ws.terminate(); ws.isAlive = false; ws.ping(); }); }, 30000);
+
+// Bot loop
+setInterval(() => {
+  for (const state of games.values()) {
+    if (state.phase === 'FINISHED' || state.phase === 'PAUSED') continue;
+    const p = currentPlayer(state);
+    if (p && p.isBot && !p.eliminated) {
+      const action = botTick(state);
+      if (action) {
+        applyAction(state, p.playerId, action);
+        state.stateVersion += 1;
+        broadcastGame(state);
+      }
+    }
+  }
+}, 1200);
+
+// CLI: seed
+if (process.argv.includes('--seed')) {
+  seedInitial();
+  console.log('Done. Exiting.');
+  process.exit(0);
+}
+
+server.listen(PORT, () => {
+  console.log('');
+  console.log('  👑 MONOPOLY LEGACY — AUTHORITATIVE SERVER');
+  console.log('  ─────────────────────────────────────────');
+  console.log(`  🌐 HTTP      : http://localhost:${PORT}`);
+  console.log(`  📡 WebSocket : ws://localhost:${PORT}/ws`);
+  console.log(`  💾 Data file : ${DB_FILE}`);
+  console.log('  ─────────────────────────────────────────');
+  if (Object.keys(DB.users).length === 0) {
+    console.log('  ⚠️  No users yet. Run:  npm run seed');
+  }
+  console.log('');
+});
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     CLIENT — dijalankan oleh browser
+     ═══════════════════════════════════════════════════════════════ -->
+<script type="text/babel" data-type="module" data-presets="react">
+import React, { useState, useEffect, useRef } from 'react';
+import { createRoot } from 'react-dom/client';
+import { Canvas, useFrame } from '@react-three/fiber';
+import { create } from 'zustand';
+
+/* ─────────── Board data ─────────── */
+const CITIES = [
+  {id:'ROMA',name:'Roma',price:15000},{id:'POMPEII',name:'Pompeii',price:17000},
+  {id:'OSTIA',name:'Ostia',price:19000},{id:'CAPUA',name:'Capua',price:21000},
+  {id:'RAVENNA',name:'Ravenna',price:24000},{id:'MEDIOLANUM',name:'Mediolanum',price:27000},
+  {id:'NEAPOLIS',name:'Neapolis',price:30000},{id:'VERONA',name:'Verona',price:33000},
+  {id:'LONDINIUM',name:'Londinium',price:36000},{id:'EBORACUM',name:'Eboracum',price:39000},
+  {id:'CAMULODUNUM',name:'Camulodunum',price:42000},{id:'VENTA_SILURUM',name:'Venta Silurum',price:45000},
+  {id:'WINTANCEASTER',name:'Wintanceaster',price:48000},{id:'CANTWARABYRIG',name:'Cantwarabyrig',price:51000},
+  {id:'LINDUM_COLONIA',name:'Lindum Colonia',price:54000},{id:'GLEVUM',name:'Glevum',price:57000},
+  {id:'HISPALIS',name:'Hispalis',price:60000},{id:'TOLETUM',name:'Toletum',price:63000},
+  {id:'CORDUBA',name:'Corduba',price:66000},{id:'EMERITA_AUGUSTA',name:'Emerita Augusta',price:69000},
+  {id:'TARRACO',name:'Tarraco',price:72000},{id:'BARCINO',name:'Barcino',price:75000},
+  {id:'VALENTIA',name:'Valentia',price:78000},{id:'CAESARAUGUSTA',name:'Caesaraugusta',price:82000},
+];
+const CITY_BY_ID = Object.fromEntries(CITIES.map(c => [c.id, c]));
+const BOARD = [
+  {t:'special',n:'START'},{t:'city',id:'ROMA'},{t:'guild'},{t:'love'},
+  {t:'city',id:'POMPEII'},{t:'wild'},{t:'shop'},{t:'city',id:'OSTIA'},
+  {t:'special',n:'TAX'},{t:'guild'},{t:'city',id:'CAPUA'},{t:'prison'},
+  {t:'city',id:'RAVENNA'},{t:'love'},{t:'shop'},{t:'city',id:'MEDIOLANUM'},
+  {t:'special',n:'AUCTION'},{t:'city',id:'NEAPOLIS'},{t:'guild'},{t:'wild'},
+  {t:'city',id:'VERONA'},{t:'special',n:'FESTIVAL'},{t:'city',id:'LONDINIUM'},{t:'shop'},
+  {t:'guild'},{t:'city',id:'EBORACUM'},{t:'love'},{t:'city',id:'CAMULODUNUM'},
+  {t:'special',n:'PLAGUE'},{t:'wild'},{t:'city',id:'VENTA_SILURUM'},{t:'prison'},
+  {t:'city',id:'WINTANCEASTER'},{t:'guild'},{t:'city',id:'CANTWARABYRIG'},{t:'shop'},
+  {t:'city',id:'LINDUM_COLONIA'},{t:'love'},{t:'special',n:'HARVEST'},{t:'city',id:'GLEVUM'},
+  {t:'guild'},{t:'wild'},{t:'city',id:'HISPALIS'},{t:'penampungan'},
+  {t:'city',id:'TOLETUM'},{t:'shop'},{t:'special',n:'TOURNAMENT'},{t:'city',id:'CORDUBA'},
+  {t:'guild'},{t:'city',id:'EMERITA_AUGUSTA'},{t:'love'},{t:'city',id:'TARRACO'},
+  {t:'special',n:'ROYAL_COURT'},{t:'wild'},{t:'city',id:'BARCINO'},{t:'guild'},
+  {t:'prison'},{t:'city',id:'VALENTIA'},{t:'special',n:'MYSTIC'},{t:'city',id:'CAESARAUGUSTA'},
+  {t:'shop'},{t:'special',n:'CAPITAL'},{t:'guild'},{t:'guild'},
+];
+function tileCoords(i) {
+  const S = 16;
+  if (i < 16) return {x: S-i, z: S};
+  if (i === 16) return {x: 0, z: S};
+  if (i < 32) return {x: 0, z: S-(i-16)};
+  if (i === 32) return {x: 0, z: 0};
+  if (i < 48) return {x: i-32, z: 0};
+  if (i === 48) return {x: S, z: 0};
+  return {x: S, z: i-48};
+}
+const TILE_COLORS = {
+  city:'#a2703a', guild:'#7b3b8a', shop:'#2e7d5b', wild:'#8a6d1f',
+  love:'#a8385c', prison:'#3a3a44', penampungan:'#4a3a20', special:'#2e4a7b',
+};
+
+/* ─────────── Store ─────────── */
+const useStore = create((set) => ({
+  screen: 'login', serverOnline: false, user: null, displayName: '',
+  mode: null, maxPlayers: 4, room: null, game: null,
+  netStatus: 'OFFLINE', ping: 0, jitter: 0, loss: 0,
+  adminSession: null, toast: null,
+  set: (p) => set(p), setScreen: (s) => set({screen:s}),
+  showToast: (t) => set({toast:t}),
+}));
+
+/* ─────────── Networking ─────────── */
+let WS = null;
+const pendingPings = new Map();
+const rttSamples = [];
+let sentPings = 0, lostPings = 0;
+let pingTimer = null;
+
+function wsUrl() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  // If opened via file://, connect to localhost:4000 directly.
+  const host = location.host || 'localhost:4000';
+  if (location.protocol === 'file:') return `ws://localhost:4000/ws`;
+  return `${proto}//${host}/ws`;
+}
+function apiUrl(path) {
+  if (location.protocol === 'file:') return `http://localhost:4000${path}`;
+  return path;
+}
+
+function connectWS() {
+  if (WS && WS.readyState <= 1) return;
+  const url = wsUrl();
+  useStore.getState().set({ netStatus: 'CONNECTING' });
+  WS = new WebSocket(url);
+  WS.onopen = () => {
+    useStore.getState().set({ netStatus: 'CONNECTED' });
+    const token = localStorage.getItem('ml_token');
+    if (token) send({ type: 'AUTH', token });
+    startPing();
+  };
+  WS.onclose = () => {
+    useStore.getState().set({ netStatus: 'OFFLINE' });
+    stopPing();
+    setTimeout(connectWS, 1500);
+  };
+  WS.onerror = () => {};
+  WS.onmessage = (ev) => {
+    let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'PONG') return onPong(msg);
+    handleServer(msg);
+  };
+}
+
+function startPing() {
+  stopPing();
+  pingTimer = setInterval(() => {
+    sentPings++;
+    const t0 = performance.now();
+    const reqId = Math.random().toString(36).slice(2);
+    pendingPings.set(reqId, t0);
+    send({ type: 'PING', t0, reqId });
+    setTimeout(() => {
+      if (pendingPings.has(reqId)) { pendingPings.delete(reqId); lostPings++; updateLoss(); }
+    }, 3000);
+  }, 1000);
+}
+function stopPing() { if (pingTimer) clearInterval(pingTimer); pingTimer = null; }
+
+function onPong(msg) {
+  const t1 = performance.now();
+  const t0 = pendingPings.get(msg.reqId);
+  if (t0 == null) return;
+  pendingPings.delete(msg.reqId);
+  const rtt = Math.round(t1 - t0);
+  rttSamples.push(rtt);
+  if (rttSamples.length > 20) rttSamples.shift();
+  const avg = Math.round(rttSamples.reduce((a,b)=>a+b,0) / rttSamples.length);
+  const jit = Math.round(Math.sqrt(rttSamples.reduce((s,x)=>s+(x-avg)**2,0) / rttSamples.length));
+  useStore.getState().set({
+    netStatus: rtt < 100 ? 'REALTIME' : 'CONNECTED',
+    ping: avg, jitter: jit,
+  });
+}
+function updateLoss() {
+  const loss = sentPings ? (lostPings / sentPings) * 100 : 0;
+  useStore.getState().set({ loss: +loss.toFixed(1) });
+}
+function send(obj) { if (WS && WS.readyState === 1) WS.send(JSON.stringify(obj)); }
+
+function handleServer(msg) {
+  const st = useStore.getState();
+  switch (msg.type) {
+    case 'AUTH_OK':
+      st.set({ user: msg.user });
+      if (msg.user?.mustChangePassword) st.setScreen('password');
+      break;
+    case 'ERROR':
+      st.showToast({kind:'error', text: `${msg.code}: ${msg.message}`});
+      break;
+    case 'ROOM_STATE':
+      st.set({ room: msg.room });
+      if (st.screen === 'mode' || st.screen === 'name') st.setScreen('lobby');
+      break;
+    case 'GAME_STATE':
+      st.set({ game: msg.state });
+      if (st.screen !== 'game') st.setScreen('game');
+      break;
+    case 'ACTION_REJECTED':
+      st.showToast({kind:'error', text: msg.error.code});
+      break;
+    case 'ADMIN_OK':
+      st.set({ adminSession: { permissions: msg.permissions, expiresAt: msg.expiresAt } });
+      st.showToast({kind:'ok', text: '👑 Admin authorized'});
+      break;
+    case 'ADMIN_AUDIT':
+      st.showToast({kind:'ok', text: `⚙️ ${msg.action} applied`});
+      break;
+  }
+}
+
+async function checkServer() {
+  try {
+    const r = await fetch(apiUrl('/api/health'), { method: 'GET' });
+    const d = await r.json();
+    if (d.ok) useStore.getState().set({ serverOnline: true });
+    else useStore.getState().set({ serverOnline: false });
+  } catch {
+    useStore.getState().set({ serverOnline: false });
+  }
+}
+
+/* ─────────── UI: Login ─────────── */
+function Login() {
+  const [accountName, setAN] = useState(localStorage.getItem('ml_last_user') || 'MUTTAQI2215');
+  const [password, setPw] = useState('');
+  const [show, setShow] = useState(false);
+  const [remember, setRem] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const st = useStore();
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!accountName || !password) return;
+    setBusy(true);
+    try {
+      const r = await fetch(apiUrl('/api/auth/login'), {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        credentials: 'include',
+        body: JSON.stringify({accountName, password}),
+      });
+      const data = await r.json();
+      if (!r.ok || !data.authenticated) {
+        st.showToast({kind:'error', text: data.error === 'SUSPENDED' ? '🔴 ACCOUNT SUSPENDED' : '🔴 INVALID ACCOUNT OR PASSWORD'});
+        setBusy(false);
+        return;
+      }
+      localStorage.setItem('ml_token', data.token);
+      if (remember) localStorage.setItem('ml_last_user', accountName);
+      else localStorage.removeItem('ml_last_user');
+      send({ type: 'AUTH', token: data.token });
+      st.set({ user: data.user });
+      st.setScreen('name');
+    } catch (err) {
+      st.showToast({kind:'error', text: 'Network error'});
+    }
+    setBusy(false);
+  }
+
+  return (
+    <div className="center">
+      <form onSubmit={submit} className="card col" style={{width:380, maxWidth:'100%'}}>
+        <div style={{textAlign:'center', marginBottom:8}}>
+          <div style={{fontSize:44}}>👑</div>
+          <h1 style={{margin:4, fontSize:22, letterSpacing:2, color:'#e9c46a'}}>MONOPOLY LEGACY</h1>
+          <div className="muted">Build Your Fortune. Protect Your Legacy.</div>
+        </div>
+        <hr style={{borderColor:'#3a3324'}}/>
+        <label className="muted">🪪 Account Name</label>
+        <input value={accountName} onChange={e=>setAN(e.target.value)} autoComplete="username"/>
+        <label className="muted">🔑 Password</label>
+        <div className="row">
+          <input type={show?'text':'password'} value={password} onChange={e=>setPw(e.target.value)} autoComplete="current-password"/>
+          <button type="button" className="btn" onClick={()=>setShow(s=>!s)}>👁️</button>
+        </div>
+        <label className="muted" style={{display:'flex', alignItems:'center', gap:8}}>
+          <input type="checkbox" style={{width:'auto'}} checked={remember} onChange={e=>setRem(e.target.checked)}/>
+          🧠 Remember Account
+        </label>
+        <button className="btn primary" disabled={busy} type="submit">🛡️ VERIFY MEMBER</button>
+      </form>
+    </div>
+  );
+}
+
+/* ─────────── UI: Password change ─────────── */
+function PasswordChange() {
+  const [pw1, setPw1] = useState(''); const [pw2, setPw2] = useState('');
+  const st = useStore();
+  function submit(e) {
+    e.preventDefault();
+    if (pw1.length < 8) return st.showToast({kind:'error', text:'Min 8 characters'});
+    if (pw1 !== pw2) return st.showToast({kind:'error', text:'Passwords differ'});
+    send({ type:'CHANGE_PASSWORD', newPassword: pw1 });
+    st.showToast({kind:'ok', text:'Password updated'});
+    st.setScreen('name');
+  }
+  return (
+    <div className="center">
+      <form onSubmit={submit} className="card col" style={{width:380}}>
+        <h2 style={{color:'#e9c46a', margin:0}}>🔐 NEW PASSWORD REQUIRED</h2>
+        <div className="muted">First login — please set a new password.</div>
+        <input type="password" placeholder="New password" value={pw1} onChange={e=>setPw1(e.target.value)}/>
+        <input type="password" placeholder="Confirm" value={pw2} onChange={e=>setPw2(e.target.value)}/>
+        <button className="btn primary" type="submit">SAVE</button>
+      </form>
+    </div>
+  );
+}
+
+/* ─────────── UI: Display name ─────────── */
+function DisplayName() {
+  const [name, setName] = useState('');
+  const st = useStore();
+  function submit(e) {
+    e.preventDefault();
+    if (name.length < 3 || name.length > 20) return st.showToast({kind:'error', text:'3–20 characters'});
+    if (!/^[\p{L}\p{N} _\-'.]+$/u.test(name)) return st.showToast({kind:'error', text:'Invalid characters'});
+    st.set({ displayName: name, screen: 'mode' });
+  }
+  return (
+    <div className="center">
+      <form onSubmit={submit} className="card col" style={{width:380}}>
+        <div className="muted">Welcome, {st.user?.accountName}</div>
+        <h2 style={{margin:0, color:'#e9c46a'}}>👑 CHOOSE YOUR LEGACY NAME</h2>
+        <div className="muted">This is your public name on the board.</div>
+        <input value={name} onChange={e=>setName(e.target.value)} maxLength={20} placeholder="e.g. Ragnar"/>
+        <button className="btn primary" type="submit">CONTINUE</button>
+      </form>
+    </div>
+  );
+}
+
+/* ─────────── UI: Mode select ─────────── */
+function ModeSelect() {
+  const st = useStore();
+  const [code, setCode] = useState('');
+  function online(n) {
+    st.set({ mode: 'ONLINE_MULTIPLAYER', maxPlayers: n });
+    send({ type:'CREATE_ROOM', mode:'ONLINE_MULTIPLAYER', maxPlayers:n, displayName: st.displayName });
+  }
+  function bot() {
+    st.set({ mode: 'BOT_PRACTICE', maxPlayers: 4 });
+    send({ type:'CREATE_ROOM', mode:'BOT_PRACTICE', displayName: st.displayName });
+  }
+  function join() {
+    if (!code) return st.showToast({kind:'error', text:'Enter room code'});
+    send({ type:'JOIN_ROOM', displayName: st.displayName, roomCode: code.toUpperCase() });
+  }
+  return (
+    <div className="center">
+      <div className="col" style={{width:440, maxWidth:'100%'}}>
+        <h2 style={{color:'#e9c46a', textAlign:'center'}}>🎮 SELECT GAME MODE</h2>
+        <div className="card col">
+          <div style={{fontWeight:700, color:'#e9c46a'}}>🌐 ONLINE MULTIPLAYER</div>
+          <div className="muted">Real players on separate devices.</div>
+          <div className="row">
+            <button className="btn" onClick={()=>online(4)}>4 Players</button>
+            <button className="btn" onClick={()=>online(6)}>6 Players</button>
+            <button className="btn" onClick={()=>online(8)}>8 Players</button>
+          </div>
+        </div>
+        <div className="card col">
+          <div style={{fontWeight:700, color:'#e9c46a'}}>🤖 BOT PRACTICE</div>
+          <div className="muted">👤 1 HUMAN + 🤖 3 SMART BOTS (fixed)</div>
+          <button className="btn" onClick={bot}>START BOT PRACTICE</button>
+        </div>
+        <div className="card col">
+          <div style={{fontWeight:700}}>🔗 JOIN A ROOM</div>
+          <div className="row">
+            <input value={code} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="ROOM CODE" maxLength={6}/>
+            <button className="btn" onClick={join}>JOIN</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── UI: Lobby ─────────── */
+function Lobby() {
+  const st = useStore();
+  const room = st.room;
+  if (!room) return <div style={{padding:40}}>Loading...</div>;
+  const isHost = room.hostUserId === st.user.userId;
+  const me = room.players.find(p => p.userId === st.user.userId);
+  return (
+    <div className="center">
+      <div className="card col" style={{width:520, maxWidth:'100%'}}>
+        <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
+          <div>
+            <div className="muted">{room.mode === 'BOT_PRACTICE' ? '🤖 BOT PRACTICE' : '🌐 ONLINE MULTIPLAYER'}</div>
+            <h2 style={{margin:'4px 0'}}>Room <span className="gold">{room.roomCode}</span></h2>
+          </div>
+          <div className="pill">{room.players.length} / {room.maxPlayers}</div>
+        </div>
+        <div className="col">
+          {room.players.map(p => (
+            <div key={p.playerId} className="row" style={{
+              justifyContent:'space-between', alignItems:'center', padding:'8px 12px',
+              borderRadius:8, background:'#1a1822',
+              border: p.userId === st.user.userId ? '1px solid #a67a25' : '1px solid #2a2434',
+            }}>
+              <div>
+                {p.isBot?'🤖':'👤'} <b>{p.displayName}</b>
+                {p.userId === st.user.userId && <span className="muted"> (you)</span>}
+                {p.isBot && <span className="muted"> · {p.botPersonality}</span>}
+              </div>
+              <div>{p.ready ? '🟢 READY' : '⚪ WAITING'}</div>
+            </div>
+          ))}
+        </div>
+        <div className="row">
+          <button className="btn" onClick={()=>send({type:'READY', ready: !me?.ready})}>
+            {me?.ready ? 'UNREADY' : 'READY'}
+          </button>
+          {isHost && <button className="btn primary" onClick={()=>send({type:'START_GAME'})}>👑 START GAME</button>}
+        </div>
+        <div className="muted">Share the room code with your friends.</div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── 3D Scene ─────────── */
+function Board3D({ game }) {
+  const groupRef = useRef();
+  useFrame((s) => {
+    if (groupRef.current) groupRef.current.rotation.y = Math.sin(s.clock.elapsedTime * 0.08) * 0.02;
+  });
+  const cityOwners = {};
+  for (const c of CITIES) {
+    const cs = game.cities?.[c.id];
+    if (cs?.ownerId) {
+      const o = game.players.find(p => p.playerId === cs.ownerId);
+      cityOwners[c.id] = o?.displayName || '?';
+    }
+  }
+  return (
+    <group ref={groupRef}>
+      <mesh position={[8, -0.6, 8]} receiveShadow>
+        <boxGeometry args={[20, 1, 20]}/>
+        <meshStandardMaterial color="#1a1410" roughness={0.95}/>
+      </mesh>
+      {BOARD.map((t, i) => {
+        const {x, z} = tileCoords(i);
+        const cs = t.t === 'city' ? game.cities?.[t.id] : null;
+        const h = 0.35 + (cs?.buildingLevel||0)*0.1 + (cs?.castleLevel||0)*0.25;
+        return (
+          <group key={i} position={[x, 0, z]}>
+            <mesh position={[0, h/2, 0]} castShadow receiveShadow>
+              <boxGeometry args={[0.9, h, 0.9]}/>
+              <meshStandardMaterial color={TILE_COLORS[t.t] || '#666'} roughness={0.75} metalness={0.15}/>
+            </mesh>
+            {cs?.castleLevel > 0 && (
+              <mesh position={[0, h + 0.25, 0]} castShadow>
+                <coneGeometry args={[0.28, 0.5, 4]}/>
+                <meshStandardMaterial color="#c9a44a" metalness={0.7} roughness={0.3}/>
+              </mesh>
+            )}
+            {cs?.hasKingdom && (
+              <mesh position={[0, h + 0.7, 0]}>
+                <boxGeometry args={[0.5, 0.4, 0.5]}/>
+                <meshStandardMaterial color="#e9c46a" emissive="#e9c46a" emissiveIntensity={0.5}/>
+              </mesh>
+            )}
+          </group>
+        );
+      })}
+      {game.players.filter(p => !p.eliminated).map((p, idx) => {
+        const {x, z} = tileCoords(p.position);
+        const angle = (idx / game.players.length) * Math.PI * 2;
+        return (
+          <mesh key={p.playerId} position={[x + Math.cos(angle)*0.32, 0.85, z + Math.sin(angle)*0.32]} castShadow>
+            <sphereGeometry args={[0.28, 20, 20]}/>
+            <meshStandardMaterial color={p.isBot ? '#8a6d1f' : '#c9a44a'} emissive={p.isBot ? '#8a6d1f' : '#c9a44a'} emissiveIntensity={0.25} metalness={0.6} roughness={0.35}/>
+          </mesh>
+        );
+      })}
+      {game.lastRoll && (
+        <group position={[8, 2.5, 8]}>
+          <mesh rotation={[0.3, 0.4, 0]} castShadow>
+            <boxGeometry args={[0.7, 0.7, 0.7]}/>
+            <meshStandardMaterial color="#f3e9d2"/>
+          </mesh>
+        </group>
+      )}
+    </group>
+  );
+}
+
+/* ─────────── UI: Game ─────────── */
+let reqSeq = 0;
+const uid = () => `${Date.now().toString(36)}-${(++reqSeq).toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+
+function netLabel(s) {
+  return {OFFLINE:'🔴 OFFLINE', CONNECTING:'🟠 RECONNECTING', CONNECTED:'🟡 CONNECTED', REALTIME:'🟢 REAL-TIME'}[s] || s;
+}
+
+function Game() {
+  const st = useStore();
+  const game = st.game;
+  const [showChron, setShowChron] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  if (!game) return <div style={{padding:40}}>Loading game...</div>;
+  const me = game.players.find(p => p.accountName === st.user?.accountName);
+  const cur = game.players[game.turnIndex];
+  const isMyTurn = me && cur?.playerId === me.playerId;
+  const pd = game.pendingDecision;
+  const pendingMine = pd && me && pd.playerId === me.playerId;
+
+  function act(action) {
+    send({
+      type:'ACTION', requestId: uid(), actionId: uid(),
+      gameId: game.gameId, clientStateVersion: game.stateVersion, action,
+    });
+  }
+
+  return (
+    <div style={{position:'fixed', inset:0, display:'flex', flexDirection:'column'}}>
+      {/* Top HUD */}
+      <div style={{
+        position:'absolute', top:0, left:0, right:0, padding:'8px 12px',
+        display:'flex', justifyContent:'space-between', alignItems:'flex-start',
+        background:'linear-gradient(180deg, rgba(11,13,22,.95), rgba(11,13,22,0))',
+        zIndex:10, pointerEvents:'none',
+      }}>
+        <div style={{pointerEvents:'auto'}}>
+          <div style={{fontWeight:800, color:'#e9c46a', letterSpacing:2, fontSize:13}}>👑 MONOPOLY LEGACY</div>
+          <div className="muted">Round {game.round} · Turn: <b>{cur?.displayName}</b></div>
+        </div>
+        <div style={{textAlign:'right', pointerEvents:'auto'}}>
+          <div className="pill hide-sm">{netLabel(st.netStatus)} · {st.ping}ms · j:{st.jitter} · L:{st.loss}%</div>
+          <div className="row" style={{marginTop:6, justifyContent:'flex-end'}}>
+            <button className="btn" onClick={()=>setShowChron(x=>!x)}>📖</button>
+            <button className="btn" onClick={()=>setShowAdmin(x=>!x)}>⚙️</button>
+          </div>
+        </div>
+      </div>
+
+      {/* 3D board */}
+      <div style={{flex:1, position:'relative'}}>
+        <Canvas shadows camera={{position:[14, 18, 14], fov:42}}>
+          <color attach="background" args={['#0b0d16']}/>
+          <ambientLight intensity={0.4}/>
+          <directionalLight position={[10, 20, 8]} intensity={1.1} castShadow color="#ffe9b0"/>
+          <pointLight position={[-10, 8, -10]} intensity={0.4} color="#7ab7ff"/>
+          <Board3D game={game}/>
+        </Canvas>
+      </div>
+
+      {/* Bottom action panel */}
+      <div style={{
+        background:'linear-gradient(0deg, rgba(11,13,22,.98), rgba(11,13,22,.75))',
+        padding:12, borderTop:'1px solid #2a2434',
+      }}>
+        {me && (
+          <div className="row" style={{justifyContent:'space-between', marginBottom:8, flexWrap:'wrap', gap:8}}>
+            <div style={{fontSize:13}}>
+              <b>{me.displayName}</b> · 💰 {me.cl.toLocaleString()} CL · ❤️ {me.hp}/{me.maxHp} · 🔮 {me.mana} · 🍀 {me.luck} · 🛡️ {me.defense}
+            </div>
+            <div className="pill">🏙️ {me.ownedCityIds.length} · 🏰 {me.castles} {me.hasKingdom && '· 👑 KINGDOM'}</div>
+          </div>
+        )}
+
+        {isMyTurn && game.phase === 'AWAIT_ROLL' && (
+          <button className="btn primary" style={{width:'100%'}} onClick={()=>act({type:'ROLL_DICE'})}>🎲 ROLL DICE</button>
+        )}
+
+        {pendingMine && pd.type === 'BUY_CITY' && (
+          <div className="row">
+            <div style={{flex:1, fontSize:14}}>🏙️ Buy <b>{pd.cityId}</b> for <span className="gold">{pd.price.toLocaleString()} CL</span>?</div>
+            <button className="btn primary" onClick={()=>act({type:'BUY_CITY'})}>BUY</button>
+            <button className="btn" onClick={()=>act({type:'DECLINE_BUY'})}>SKIP</button>
+          </div>
+        )}
+        {pendingMine && pd.type === 'UPGRADE_OR_SKIP' && (
+          <div className="row">
+            <div style={{flex:1, fontSize:14}}>⚒️ Upgrade <b>{pd.cityId}</b> for <span className="gold">{pd.upgradeCost.toLocaleString()} CL</span>?</div>
+            <button className="btn primary" onClick={()=>act({type:'UPGRADE_CITY', cityId:pd.cityId})}>UPGRADE</button>
+            <button className="btn" onClick={()=>act({type:'DECLINE_BUY'})}>SKIP</button>
+          </div>
+        )}
+        {pendingMine && pd.type === 'GUILD' && (
+          <div className="col">
+            <div>⚔️ Choose a Guild:</div>
+            <div className="row" style={{flexWrap:'wrap'}}>
+              {pd.guilds.map(g => <button key={g} className="btn" onClick={()=>act({type:'JOIN_GUILD', guild:g})}>{g}</button>)}
+            </div>
+            <div className="row" style={{flexWrap:'wrap'}}>
+              {pd.armies.map(a => (
+                <button key={a.tier} className="btn" onClick={()=>act({type:'BUY_ARMY', tier:a.tier})}>
+                  🛡️ {a.name} — {a.cost.toLocaleString()}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {pendingMine && pd.type === 'SHOP' && (
+          <div className="col">
+            <div>🛍️ Mercy Shop:</div>
+            <div className="row" style={{flexWrap:'wrap'}}>
+              {pd.items.map(i => <button key={i.id} className="btn" onClick={()=>act({type:'BUY_ITEM', itemId:i.id})}>{i.name} — {i.price}</button>)}
+              <button className="btn" onClick={()=>act({type:'DECLINE_BUY'})}>LEAVE</button>
+            </div>
+          </div>
+        )}
+        {pendingMine && pd.type === 'WILD_CARD' && (
+          <div className="col">
+            <div>🃏 Choose one Wild Card:</div>
+            <div className="row" style={{flexWrap:'wrap'}}>
+              {pd.cards.map(c => (
+                <button key={c.id} className="btn" onClick={()=>act({type:'CHOOSE_WILD_CARD', cardId:c.id})}>
+                  {c.name} <span className="muted">({c.effect})</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {isMyTurn && game.phase === 'END_TURN' && !pendingMine && (
+          <button className="btn" onClick={()=>act({type:'END_TURN'})}>➡️ END TURN</button>
+        )}
+        {!isMyTurn && game.phase !== 'FINISHED' && (
+          <div className="muted">Waiting for {cur?.displayName}...</div>
+        )}
+
+        {game.phase === 'FINISHED' && game.winner && (
+          <div className="card" style={{textAlign:'center', marginTop:8}}>
+            <div style={{fontSize:32}}>🏆</div>
+            <h3 style={{margin:0, color:'#e9c46a'}}>{game.winner.displayName} is LEGACY CHAMPION</h3>
+            <div className="muted">Final Legacy Value: {game.winner.value.toLocaleString()}</div>
+          </div>
+        )}
+      </div>
+
+      {showChron && (
+        <div className="card" style={{position:'absolute', right:12, top:80, width:300, maxHeight:'60vh', overflow:'auto', zIndex:20}}>
+          <div className="row" style={{justifyContent:'space-between'}}>
+            <b>📖 Chronicle</b>
+            <button className="btn" onClick={()=>setShowChron(false)}>✕</button>
+          </div>
+          {game.chronicle.slice().reverse().map((c, i) => (
+            <div key={i} className="muted" style={{marginTop:6}}>R{c.round}: {c.text}</div>
+          ))}
+        </div>
+      )}
+
+      {showAdmin && <AdminPanel onClose={()=>setShowAdmin(false)}/>}
+    </div>
+  );
+}
+
+/* ─────────── UI: Admin ─────────── */
+function AdminPanel({ onClose }) {
+  const st = useStore();
+  const game = st.game;
+  const admin = st.adminSession;
+  const [pw, setPw] = useState('');
+  const [target, setTarget] = useState('');
+  const [amount, setAmount] = useState('50000');
+
+  if (!admin) {
+    return (
+      <div className="card col" style={{position:'absolute', right:12, top:80, width:340, zIndex:25}}>
+        <div className="row" style={{justifyContent:'space-between'}}>
+          <b>⚙️ ADMIN MODE</b>
+          <button className="btn" onClick={onClose}>✕</button>
+        </div>
+        <div className="muted">Server-side admin authentication required.</div>
+        <input type="password" value={pw} onChange={e=>setPw(e.target.value)} placeholder="Admin password"/>
+        <button className="btn primary" onClick={()=>send({type:'ADMIN_AUTH', password:pw})}>AUTHENTICATE</button>
+      </div>
+    );
+  }
+
+  function a(name, arg) {
+    send({
+      type:'ADMIN_ACTION', gameId: game.gameId,
+      action: {name, targetPlayerId: target||null, arg, requestId: uid(), actionId: uid()},
+    });
+  }
+
+  return (
+    <div className="card col" style={{position:'absolute', right:12, top:80, width:360, zIndex:25, maxHeight:'80vh', overflow:'auto'}}>
+      <div className="row" style={{justifyContent:'space-between'}}>
+        <b>⚙️ ADMIN <span className="pill">AUTHORIZED</span></b>
+        <button className="btn" onClick={onClose}>✕</button>
+      </div>
+      <div className="muted">Target player</div>
+      <select value={target} onChange={e=>setTarget(e.target.value)}>
+        <option value="">— Select —</option>
+        {game.players.map(p => <option key={p.playerId} value={p.playerId}>{p.displayName}</option>)}
+      </select>
+      <div className="muted">Amount</div>
+      <input value={amount} onChange={e=>setAmount(e.target.value)}/>
+      <div className="row" style={{flexWrap:'wrap'}}>
+        <button className="btn" onClick={()=>a('GRANT_CL', Number(amount))}>💰 Add CL</button>
+        <button className="btn" onClick={()=>a('SET_CL', Number(amount))}>Set CL</button>
+        <button className="btn" onClick={()=>a('HEAL_FULL')}>❤️ Full Heal</button>
+        <button className="btn" onClick={()=>a('MANA_FULL')}>🔮 Full Mana</button>
+        <button className="btn" onClick={()=>a('GRANT_ALL_ITEMS')}>🎒 Collect All Items</button>
+        <button className="btn" onClick={()=>a('SUMMON_WEATHER','STORM')}>🌦️ Storm</button>
+        <button className="btn" onClick={()=>a('SUMMON_WEATHER','GOLDEN_HARVEST')}>🌾 Harvest</button>
+        <button className="btn" onClick={()=>a('FORCE_NEXT_TURN')}>⏩ Next Turn</button>
+        <button className="btn danger" onClick={()=>a('PAUSE')}>⏸ Pause</button>
+        <button className="btn" onClick={()=>a('RESUME')}>▶ Resume</button>
+      </div>
+      <div className="muted">All admin actions are audited server-side.</div>
+    </div>
+  );
+}
+
+/* ─────────── UI: Setup Modal (server code copier) ─────────── */
+function SetupModal() {
+  const [tab, setTab] = useState('package.json');
+  const [copied, setCopied] = useState('');
+  const files = ['package.json', 'server.js'];
+  function getCode(name) {
+    const el = document.getElementById('file-' + name);
+    return el ? el.textContent : '';
+  }
+  async function copy(name) {
+    try {
+      await navigator.clipboard.writeText(getCode(name));
+      setCopied(name);
+      setTimeout(()=>setCopied(''), 1500);
+    } catch {
+      // fallback
+      const ta = document.createElement('textarea');
+      ta.value = getCode(name);
+      document.body.appendChild(ta); ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      setCopied(name);
+      setTimeout(()=>setCopied(''), 1500);
+    }
+  }
+  function downloadAll() {
+    for (const name of files) {
+      const blob = new Blob([getCode(name)], {type:'text/plain'});
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  }
+  return (
+    <div className="modal-bg">
+      <div className="modal card col">
+        <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
+          <div>
+            <div style={{fontSize:32}}>👑</div>
+            <h2 style={{margin:0, color:'#e9c46a'}}>SETUP — Jalankan Server Dulu</h2>
+            <div className="muted">Server game belum aktif. Copy dua file di bawah & jalankan di terminal.</div>
+          </div>
+        </div>
+
+        <div className="card" style={{background:'#0d0b12'}}>
+          <div style={{fontWeight:700, color:'#e9c46a', marginBottom:6}}>📋 Langkah Cepat (3 menit)</div>
+          <ol className="muted" style={{margin:'6px 0 6px 20px', padding:0}}>
+            <li>Buat folder baru, misal <code>ml-server</code></li>
+            <li>Copy file <b>package.json</b> dan <b>server.js</b> ke folder itu (tombol copy di bawah / klik <b>Download Both</b>)</li>
+            <li>Buka terminal di folder itu, jalankan:</li>
+          </ol>
+          <pre>{`npm install
+npm run seed     # membuat akun pertama MUTTAQI2215
+npm start        # server hidup di http://localhost:4000`}</pre>
+          <div className="muted">Kembali ke halaman ini → auto-detect server aktif → Login muncul.</div>
+          <div className="row" style={{marginTop:8}}>
+            <button className="btn primary" onClick={downloadAll}>⬇️ Download Both Files</button>
+            <button className="btn" onClick={()=>{ checkServer(); }}>🔄 Retry Detect Server</button>
+          </div>
+        </div>
+
+        <div className="tabs">
+          {files.map(f => (
+            <div key={f} className={`tab ${tab===f?'active':''}`} onClick={()=>setTab(f)}>{f}</div>
+          ))}
+        </div>
+
+        <div className="row" style={{justifyContent:'space-between', alignItems:'center'}}>
+          <div className="muted">{tab}</div>
+          <button className="btn" onClick={()=>copy(tab)}>{copied===tab ? '✅ Copied!' : '📋 Copy'}</button>
+        </div>
+        <pre>{getCode(tab)}</pre>
+
+        <div className="muted" style={{fontSize:12}}>
+          🔐 Admin password default: <b>changeme-admin</b> — ganti dengan env var <code>ADMIN_PASSWORD</code> saat menjalankan server.
+          <br/>
+          💡 <b>Multi-device testing:</b> buka HTML ini di HP lain dengan alamat IP komputer host, contoh <code>http://192.168.1.10:4000</code> setelah server jalan (lihat catatan di README server).
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─────────── App root ─────────── */
+function App() {
+  const st = useStore();
+  useEffect(() => {
+    checkServer();
+    connectWS();
+    const iv = setInterval(checkServer, 3000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    if (!st.toast) return;
+    const t = setTimeout(() => useStore.getState().set({toast:null}), 3500);
+    return () => clearTimeout(t);
+  }, [st.toast]);
+
+  return (
+    <>
+      {!st.serverOnline ? (
+        <SetupModal/>
+      ) : (
+        <>
+          {st.screen === 'login' && <Login/>}
+          {st.screen === 'password' && <PasswordChange/>}
+          {st.screen === 'name' && <DisplayName/>}
+          {st.screen === 'mode' && <ModeSelect/>}
+          {st.screen === 'lobby' && <Lobby/>}
+          {st.screen === 'game' && <Game/>}
+        </>
+      )}
+      {st.toast && (
+        <div className="toast" style={{
+          background: st.toast.kind === 'error' ? '#4a1a1a' : '#1a3a1a',
+          border: `1px solid ${st.toast.kind === 'error' ? '#a44' : '#4a4'}`,
+        }}>{st.toast.text}</div>
+      )}
+    </>
+  );
+}
+
+createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
